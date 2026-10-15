@@ -101,7 +101,7 @@ def previous_session(calendar, date):
     return calendar.previous_session(session).date().isoformat()
 
 
-def collect(now):
+def collect(now, backfill=False):
     calendar = xcals.get_calendar("XSHG")
     if not calendar.is_session(now.date()):
         print("Exchange closed; skipping")
@@ -119,7 +119,10 @@ def collect(now):
     prior_date = previous_session(calendar, now.date())
     prior_path = DATA_DIR / f"{prior_date}.json"
     prior = json.loads(prior_path.read_text(encoding="utf-8")).get(slot) if prior_path.exists() else None
-    record = {"time": now.isoformat(timespec="seconds"), "markets": values, "previous_date": prior_date}
+    collected_at = datetime.now(TZ) if backfill else now
+    record = {"time": collected_at.isoformat(timespec="seconds"), "markets": values, "previous_date": prior_date}
+    if backfill:
+        record["backfill"] = True
     if prior is not None:
         prior_time = datetime.fromisoformat(prior["time"])
         if abs((now - datetime.combine(now.date(), prior_time.timetz().replace(tzinfo=None), TZ)).total_seconds()) <= 300:
@@ -136,6 +139,8 @@ def message(record):
     lines = [f"沪深京 A 股累计成交额：{current:,.2f} 亿元",
              f"沪 {record['markets']['Shanghai']/1e8:,.2f} ｜深 {record['markets']['Shenzhen']/1e8:,.2f} ｜京 {record['markets']['Beijing']/1e8:,.2f} 亿元",
              f"取数时间：{record['time'][11:16]}（北京时间）"]
+    if record.get("backfill"):
+        lines.append("今日 15:00 收盘档：收盘后补取，非当时保存的快照")
     if "previous" in record:
         previous = sum(record["previous"].values()) / 1e8
         delta = current - previous
@@ -169,11 +174,19 @@ def notify(slot=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("collect", "notify", "test-notify"))
+    parser.add_argument("action", choices=("collect", "backfill-close", "notify", "test-notify"))
     parser.add_argument("--slot", choices=SLOTS)
     args = parser.parse_args()
-    if args.action == "collect":
-        slot = collect(datetime.now(TZ))
+    if args.action in ("collect", "backfill-close"):
+        now = datetime.now(TZ)
+        backfill = args.action == "backfill-close"
+        if backfill:
+            close = now.replace(hour=15, minute=2, second=0, microsecond=0)
+            if now < close or now.hour >= 23:
+                raise ValueError("Backfill is only available after today's market close")
+            slot = collect(close, backfill=True)
+        else:
+            slot = collect(now)
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 output.write(f"slot={slot or ''}\n")

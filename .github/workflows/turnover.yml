@@ -15,6 +15,10 @@ on:
         description: Send a clearly labeled test notification
         type: boolean
         default: false
+      backfill_close:
+        description: Send today's verified closing turnover after 15:00
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -46,7 +50,7 @@ jobs:
       - name: Collect snapshot
         if: github.event_name != 'workflow_dispatch' || !inputs.test_notification
         id: collect
-        run: python push.py collect
+        run: python push.py ${{ inputs.backfill_close && 'backfill-close' || 'collect' }}
       - name: Save snapshot
         if: steps.collect.outputs.slot != ''
         env:
