@@ -147,14 +147,20 @@ def message(record):
     return "\n".join(lines)
 
 
-def notify(slot):
+def notify(slot=None):
     topic = os.environ.get("NTFY_TOPIC", "")
     if not topic or not all(c.isascii() and (c.isalnum() or c in "_-") for c in topic):
         raise ValueError("Set NTFY_TOPIC to a random URL-safe topic in repository secrets")
-    today = datetime.now(TZ).date().isoformat()
-    record = json.loads((DATA_DIR / f"{today}.json").read_text(encoding="utf-8"))[slot]
-    request = Request(f"https://ntfy.sh/{topic}", data=message(record).encode("utf-8"),
-                      headers={"Title": f"A-share turnover {slot}", "Tags": "chart_with_upwards_trend"}, method="POST")
+    if slot is None:
+        title = "A-share notification test"
+        body = "测试通知：通知通道已触发。今日 14:30 没有保存成交额快照，无法提供该时点的真实数据。"
+    else:
+        today = datetime.now(TZ).date().isoformat()
+        record = json.loads((DATA_DIR / f"{today}.json").read_text(encoding="utf-8"))[slot]
+        title = f"A-share turnover {slot}"
+        body = message(record)
+    request = Request(f"https://ntfy.sh/{topic}", data=body.encode("utf-8"),
+                      headers={"Title": title, "Tags": "chart_with_upwards_trend"}, method="POST")
     with urlopen(request, timeout=15) as response:
         if response.status != 200:
             raise RuntimeError(f"ntfy rejected notification: {response.status}")
@@ -163,7 +169,7 @@ def notify(slot):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("collect", "notify"))
+    parser.add_argument("action", choices=("collect", "notify", "test-notify"))
     parser.add_argument("--slot", choices=SLOTS)
     args = parser.parse_args()
     if args.action == "collect":
@@ -171,6 +177,8 @@ def main():
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 output.write(f"slot={slot or ''}\n")
+    elif args.action == "test-notify":
+        notify()
     else:
         if not args.slot:
             parser.error("--slot is required for notify")

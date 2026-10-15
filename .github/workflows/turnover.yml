@@ -10,6 +10,11 @@ on:
     - cron: '2,17,32,47 6 * * 1-5'
     - cron: '2 7 * * 1-5'
   workflow_dispatch:
+    inputs:
+      test_notification:
+        description: Send a clearly labeled test notification
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -33,7 +38,13 @@ jobs:
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: test -n "$NTFY_TOPIC" || { echo 'Configure NTFY_TOPIC in Actions secrets first'; exit 1; }
+      - name: Send test notification
+        if: github.event_name == 'workflow_dispatch' && inputs.test_notification
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python push.py test-notify
       - name: Collect snapshot
+        if: github.event_name != 'workflow_dispatch' || !inputs.test_notification
         id: collect
         run: python push.py collect
       - name: Save snapshot
