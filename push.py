@@ -88,15 +88,16 @@ def get_turnover(now, closing=False):
                 seen.add(code)
                 traded = row["f6"] != "-" and amount(row["f6"]) > 0
                 if not traded:
+                    breadth["up"] += 1
                     continue
                 if label == "Beijing":
                     turnover += amount(row["f6"])
                 change = row["f3"]
                 if isinstance(change, bool) or not isinstance(change, (int, float)) or not math.isfinite(change):
                     raise ValueError(f"Invalid {label} stock change: {code}")
-                if change > 0:
+                if change >= 0:
                     breadth["up"] += 1
-                elif change < 0:
+                else:
                     breadth["down"] += 1
             if len(seen) == expected:
                 break

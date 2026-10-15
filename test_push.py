@@ -44,8 +44,8 @@ class TurnoverTests(unittest.TestCase):
         with patch.object(push, "get_json", side_effect=self.quotes(stamp)):
             values, breadth = push.get_turnover(self.now)
         self.assertEqual(values, {"Shanghai": 100e8, "Shenzhen": 200e8, "Beijing": 50e8})
-        self.assertEqual(breadth, {"up": 524, "down": 524})
-        self.assertIn("涨跌家数 524:524", push.message({"time": self.now.isoformat(),
+        self.assertEqual(breadth, {"up": 526, "down": 524})
+        self.assertIn("涨跌家数 526:524", push.message({"time": self.now.isoformat(),
                                                          "markets": values, "breadth": breadth,
                                                          "previous_date": "2025-06-09"}))
 
@@ -54,13 +54,26 @@ class TurnoverTests(unittest.TestCase):
         with patch.object(push, "get_json", side_effect=self.quotes(stamp, duplicate=True)):
             with self.assertRaisesRegex(ValueError, "Duplicate"):
                 push.get_turnover(self.now)
+    def test_nontraded_stock_with_missing_change_counts_as_up(self):
+        stamp = int(self.now.timestamp())
+        fetch = self.quotes(stamp)
+
+        def missing_change(url, params):
+            payload = fetch(url, params)
+            if url == push.BEIJING_URL and "m:1" in params["fs"] and params["pn"] == 1:
+                payload["data"]["diff"][1]["f3"] = "-"
+            return payload
+
+        with patch.object(push, "get_json", side_effect=missing_change):
+            _, breadth = push.get_turnover(self.now)
+        self.assertEqual(breadth, {"up": 526, "down": 524})
     def test_reject_invalid_change_for_traded_stock(self):
         stamp = int(self.now.timestamp())
         fetch = self.quotes(stamp)
 
         def invalid(url, params):
             payload = fetch(url, params)
-            if url == push.BEIJING_URL and "m:1" in params["fs"]:
+            if url == push.BEIJING_URL and "m:1" in params["fs"] and params["pn"] == 1:
                 payload["data"]["diff"][2]["f3"] = "-"
             return payload
 
