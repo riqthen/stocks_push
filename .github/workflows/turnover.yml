@@ -1,0 +1,54 @@
+name: A-share turnover notification
+
+on:
+  schedule:
+    # UTC; Beijing time is UTC+8. Jobs may start late; script skips stale slots.
+    - cron: '32,47 1 * * 1-5'
+    - cron: '2,17,32 2 * * 1-5'
+    - cron: '2,32 3 * * 1-5'
+    - cron: '2,32 5 * * 1-5'
+    - cron: '2,17,32,47 6 * * 1-5'
+    - cron: '2 7 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: turnover-collector
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Check notification configuration
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: test -n "$NTFY_TOPIC" || { echo 'Configure NTFY_TOPIC in Actions secrets first'; exit 1; }
+      - name: Collect snapshot
+        id: collect
+        run: python push.py collect
+      - name: Save snapshot
+        if: steps.collect.outputs.slot != ''
+        env:
+          SLOT: ${{ steps.collect.outputs.slot }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git commit -m "Save turnover snapshot $SLOT"
+          git push
+      - name: Send iPhone notification
+        if: steps.collect.outputs.slot != ''
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SLOT: ${{ steps.collect.outputs.slot }}
+        run: python push.py notify --slot "$SLOT"
