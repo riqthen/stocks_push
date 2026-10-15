@@ -42,7 +42,7 @@ def amount(value):
     return value
 
 
-def get_turnover(now):
+def get_turnover(now, closing=False):
     indexes = get_json(INDEX_URL, {"secids": "1.000002,0.399107", "fields": "f12,f14,f6,f124"})
     rows = indexes["data"]["diff"]
     by_code = {row["f12"]: row for row in rows}
@@ -52,7 +52,11 @@ def get_turnover(now):
     for code, label in (("000002", "Shanghai"), ("399107", "Shenzhen")):
         row = by_code[code]
         stamp = datetime.fromtimestamp(int(row["f124"]), TZ)
-        if stamp.date() != now.date() or now - stamp > MAX_DELAY or stamp > now + timedelta(minutes=2):
+        if closing:
+            valid = stamp.date() == now.date() and stamp.hour >= 15 and stamp <= datetime.now(TZ) + timedelta(minutes=2)
+        else:
+            valid = stamp.date() == now.date() and now - stamp <= MAX_DELAY and stamp <= now + timedelta(minutes=2)
+        if not valid:
             raise ValueError(f"Stale {label} quote: {stamp.isoformat()}")
         values[label] = amount(row["f6"])
 
@@ -115,7 +119,7 @@ def collect(now, backfill=False):
     if slot in records:
         print("Slot already collected; skipping")
         return None
-    values = get_turnover(now)
+    values = get_turnover(now, closing=backfill)
     prior_date = previous_session(calendar, now.date())
     prior_path = DATA_DIR / f"{prior_date}.json"
     prior = json.loads(prior_path.read_text(encoding="utf-8")).get(slot) if prior_path.exists() else None

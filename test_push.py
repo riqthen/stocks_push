@@ -64,6 +64,18 @@ class TurnoverTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Stale"):
                 push.get_turnover(self.now)
 
+    def test_closing_quote_allows_post_close_updates(self):
+        stamp = int(self.now.replace(hour=16, minute=12).timestamp())
+        index = {"data": {"diff": [
+            {"f12": "000002", "f6": 100, "f124": stamp},
+            {"f12": "399107", "f6": 200, "f124": stamp}]}}
+        with patch.object(push, "datetime", wraps=datetime) as clock, patch.object(
+                push, "get_json", side_effect=[index, {"data": {"total": 50, "diff": [
+                    {"f12": f"8{i:05d}", "f6": 1} for i in range(50)]}}]):
+            clock.now.return_value = self.now.replace(hour=19)
+            close = self.now.replace(hour=15, minute=2)
+            self.assertEqual(push.get_turnover(close, closing=True)["Beijing"], 50)
+
 
 if __name__ == "__main__":
     unittest.main()
