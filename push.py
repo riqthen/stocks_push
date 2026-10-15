@@ -162,7 +162,7 @@ def notify(slot=None):
         raise ValueError("Set NTFY_TOPIC to a random URL-safe topic in repository secrets")
     if slot is None:
         title = "A-share notification test"
-        body = "测试通知：通知通道已触发。今日 14:30 没有保存成交额快照，无法提供该时点的真实数据。"
+        body = "测试通知：今日 15:00 沪深京成交额未能从行情源完整取得，暂无可信数据。这条消息仅验证推送通道。"
     else:
         today = datetime.now(TZ).date().isoformat()
         record = json.loads((DATA_DIR / f"{today}.json").read_text(encoding="utf-8"))[slot]
