@@ -61,36 +61,52 @@ def get_turnover(now, closing=False):
         values[label] = amount(row["f6"])
 
     common = {"pz": 100, "po": 1, "np": 1, "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-              "fltt": 2, "invt": 2, "fid": "f12", "fs": "m:0 t:81 s:2048", "fields": "f12,f6"}
-    seen = set()
-    total_amount = 0
-    expected = None
-    for page in range(1, 21):
-        payload = get_json(BEIJING_URL, {**common, "pn": page})
-        data = payload["data"]
-        rows = data["diff"]
-        if not isinstance(rows, list) or not rows:
-            raise ValueError("Missing Beijing stocks")
-        if expected is None:
-            expected = int(data["total"])
-            if expected < 50 or expected > 2000:
-                raise ValueError(f"Unexpected Beijing stock count: {expected}")
-        elif int(data["total"]) != expected:
-            raise ValueError("Beijing stock count changed during pagination")
-        for row in rows:
-            code = row["f12"]
-            if code in seen or not code.startswith(("4", "8", "92")):
-                raise ValueError(f"Duplicate or unexpected Beijing stock: {code}")
-            seen.add(code)
-            # Suspended shares have no trades and may report '-' instead of zero.
-            total_amount += 0 if row["f6"] == "-" else amount(row["f6"])
-        if len(seen) == expected:
-            values["Beijing"] = total_amount
-            return values
-        if len(seen) > expected:
-            raise ValueError("Too many Beijing stocks")
-    raise ValueError("Incomplete Beijing stock pages")
-
+              "fltt": 2, "invt": 2, "fid": "f12", "fields": "f12,f3,f6"}
+    markets = (("Shanghai", "m:1 t:2,m:1 t:23", 500),
+               ("Shenzhen", "m:0 t:6,m:0 t:80", 500),
+               ("Beijing", "m:0 t:81 s:2048", 50))
+    breadth = {"up": 0, "down": 0}
+    for label, stock_filter, minimum in markets:
+        seen = set()
+        expected = None
+        turnover = 0
+        for page in range(1, 101):
+            data = get_json(BEIJING_URL, {**common, "fs": stock_filter, "pn": page})["data"]
+            rows = data["diff"]
+            if not isinstance(rows, list) or not rows or len(rows) > 100:
+                raise ValueError(f"Missing or oversized {label} stock page")
+            if expected is None:
+                expected = int(data["total"])
+                if not minimum <= expected <= 5000:
+                    raise ValueError(f"Unexpected {label} stock count: {expected}")
+            elif int(data["total"]) != expected:
+                raise ValueError(f"{label} stock count changed during pagination")
+            for row in rows:
+                code = row["f12"]
+                if code in seen or (label == "Beijing" and not code.startswith(("4", "8", "92"))):
+                    raise ValueError(f"Duplicate or unexpected {label} stock: {code}")
+                seen.add(code)
+                traded = row["f6"] != "-" and amount(row["f6"]) > 0
+                if not traded:
+                    continue
+                if label == "Beijing":
+                    turnover += amount(row["f6"])
+                change = row["f3"]
+                if isinstance(change, bool) or not isinstance(change, (int, float)) or not math.isfinite(change):
+                    raise ValueError(f"Invalid {label} stock change: {code}")
+                if change > 0:
+                    breadth["up"] += 1
+                elif change < 0:
+                    breadth["down"] += 1
+            if len(seen) == expected:
+                break
+            if len(seen) > expected:
+                raise ValueError(f"Too many {label} stocks")
+        else:
+            raise ValueError(f"Incomplete {label} stock pages")
+        if label == "Beijing":
+            values[label] = turnover
+    return values, breadth
 
 def current_slot(now):
     for slot in SLOTS:
@@ -119,12 +135,12 @@ def collect(now, backfill=False):
     if slot in records:
         print("Slot already collected; skipping")
         return None
-    values = get_turnover(now, closing=backfill)
+    values, breadth = get_turnover(now, closing=backfill)
     prior_date = previous_session(calendar, now.date())
     prior_path = DATA_DIR / f"{prior_date}.json"
     prior = json.loads(prior_path.read_text(encoding="utf-8")).get(slot) if prior_path.exists() else None
     collected_at = datetime.now(TZ) if backfill else now
-    record = {"time": collected_at.isoformat(timespec="seconds"), "markets": values, "previous_date": prior_date}
+    record = {"time": collected_at.isoformat(timespec="seconds"), "markets": values, "breadth": breadth, "previous_date": prior_date}
     if backfill:
         record["backfill"] = True
     if prior is not None:
@@ -143,6 +159,8 @@ def message(record):
     lines = [f"沪深京 A 股累计成交额：{current:,.2f} 亿元",
              f"沪 {record['markets']['Shanghai']/1e8:,.2f} ｜深 {record['markets']['Shenzhen']/1e8:,.2f} ｜京 {record['markets']['Beijing']/1e8:,.2f} 亿元",
              f"取数时间：{record['time'][11:16]}（北京时间）"]
+    breadth = record.get("breadth")
+    lines.append(f"涨跌家数 {breadth['up']}:{breadth['down']}" if breadth else "涨跌家数 暂无")
     if record.get("backfill"):
         lines.append("今日 15:00 收盘档：收盘后补取，非当时保存的快照")
     if "previous" in record:
